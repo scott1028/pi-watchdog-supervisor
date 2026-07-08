@@ -15,8 +15,17 @@
     "test": "vitest run",
     "type-check": "tsc --noEmit"
   },
+  "peerDependencies": {
+    "@gotgenes/pi-subagents": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "@gotgenes/pi-subagents": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.3",
+    "@gotgenes/pi-subagents": "^18.0.1",
     "@types/node": "^26.1.1",
     "typescript": "^5.5.0",
     "vitest": "^3.0.0"
