@@ -40,13 +40,18 @@ export const loadConfigFile = (
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     return { config: null, warning: `Expected a JSON object in ${path}; file ignored` };
   }
+  return { config: pickKnownConfig(parsed as Record<string, unknown>) };
+};
+
+// Keep only WatchdogConfig fields; drop unknown keys
+export const pickKnownConfig = (raw: Record<string, unknown>): Partial<WatchdogConfig> => {
   const config: Partial<WatchdogConfig> = {};
   for (const key of Object.keys(DEFAULT_CONFIG) as Array<keyof WatchdogConfig>) {
-    if (key in parsed) {
-      (config as Record<string, unknown>)[key] = (parsed as Record<string, unknown>)[key];
+    if (key in raw) {
+      (config as Record<string, unknown>)[key] = raw[key];
     }
   }
-  return { config };
+  return config;
 };
 
 export const mergeConfig = (

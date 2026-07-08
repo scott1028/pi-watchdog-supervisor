@@ -94,6 +94,69 @@ describe('getLastAlert / recordAlert', () => {
   });
 });
 
+describe('paused state (shared)', () => {
+  it('starts unpaused and toggles via setPaused', () => {
+    const store = getOrCreateStore(10);
+    expect(store.isPaused()).toBe(false);
+    store.setPaused(true);
+    expect(store.isPaused()).toBe(true);
+    store.setPaused(false);
+    expect(store.isPaused()).toBe(false);
+  });
+
+  it('is shared across getOrCreateStore calls', () => {
+    getOrCreateStore(10).setPaused(true);
+    expect(getOrCreateStore(10).isPaused()).toBe(true);
+  });
+});
+
+describe('rescue message override (shared)', () => {
+  it('starts undefined and round-trips', () => {
+    const store = getOrCreateStore(10);
+    expect(store.getRescueMessage()).toBeUndefined();
+    store.setRescueMessage('custom message');
+    expect(store.getRescueMessage()).toBe('custom message');
+  });
+});
+
+describe('config override (shared)', () => {
+  it('starts empty and merges successive sets', () => {
+    const store = getOrCreateStore(10);
+    expect(store.getConfigOverride()).toEqual({});
+    store.setConfigOverride({ repeatThreshold: 5 });
+    store.setConfigOverride({ cooldownSec: 120 });
+    expect(store.getConfigOverride()).toEqual({ repeatThreshold: 5, cooldownSec: 120 });
+  });
+});
+
+describe('alert sink', () => {
+  it('returns false when no sink is registered', () => {
+    const store = getOrCreateStore(10);
+    expect(store.alert('hello', 'warning')).toBe(false);
+  });
+
+  it('delivers message and severity to the registered sink', () => {
+    const store = getOrCreateStore(10);
+    const received: Array<[string, string]> = [];
+    store.setAlertSink((message, severity) => {
+      received.push([message, severity]);
+    });
+    expect(store.alert('hello', 'critical')).toBe(true);
+    expect(received).toEqual([['hello', 'critical']]);
+  });
+});
+
+describe('resolveAgentId', () => {
+  it('maps a sessionId back to its linked agentId and passes agentIds through', () => {
+    const store = getOrCreateStore(10);
+    store.registerChild('sess-1');
+    store.linkAgent('agent-1', 'sess-1');
+    expect(store.resolveAgentId('sess-1')).toBe('agent-1');
+    expect(store.resolveAgentId('agent-1')).toBe('agent-1');
+    expect(store.resolveAgentId('unknown')).toBeUndefined();
+  });
+});
+
 describe('FIFO agent linking', () => {
   it('pairs session-created and started events in order', () => {
     const store = getOrCreateStore(10);

@@ -3,15 +3,14 @@ import type {
   ExtensionCommandContext,
 } from '@earendil-works/pi-coding-agent';
 import type { WatchdogConfig, WatchdogEvent, WatchdogTarget } from './types.ts';
-import type { SessionState } from './state.ts';
 import type { TargetRegistry } from './registry.ts';
 import type { WatchdogStore } from './store.ts';
+import { mergeConfig } from './config.ts';
 import { detectStuck } from './detector.ts';
 import type { SubagentsIntegration } from './integrations/gotgenes-subagents.ts';
 
 type WatchdogRuntime = {
   config: WatchdogConfig;
-  state: SessionState;
   registry: TargetRegistry;
   getIntegration: () => Promise<SubagentsIntegration>;
   store: WatchdogStore;
@@ -69,14 +68,14 @@ export const registerWatchdogCommands = (pi: ExtensionAPI, runtime: WatchdogRunt
       const [subcommand, ...rest] = args.trim().split(/\s+/);
       switch (subcommand) {
         case 'status': {
-          const { config, state, registry, getIntegration } = runtime;
-          const integration = await getIntegration();
+          const { config, registry, getIntegration, store } = runtime;
           const header = [
             'watchdog-supervisor loaded',
             `enabled=${config.enabled}`,
-            `paused=${state.isPaused()}`,
+            `paused=${store.isPaused()}`,
             `alertMode=${config.alertMode}`,
           ].join(' | ');
+          const integration = await getIntegration();
           if (!integration.available) {
             output(
               ctx,
@@ -93,9 +92,10 @@ export const registerWatchdogCommands = (pi: ExtensionAPI, runtime: WatchdogRunt
           break;
         }
         case 'config': {
+          const merged = mergeConfig(runtime.config, runtime.store.getConfigOverride());
           const effective = {
-            ...runtime.config,
-            rescueMessage: runtime.state.getEffectiveRescueMessage(runtime.config),
+            ...merged,
+            rescueMessage: runtime.store.getRescueMessage() ?? merged.rescueMessage,
           };
           output(ctx, JSON.stringify(effective, null, 2));
           break;
@@ -107,16 +107,16 @@ export const registerWatchdogCommands = (pi: ExtensionAPI, runtime: WatchdogRunt
             output(ctx, 'Usage: /watchdog set rescueMessage <message>');
             break;
           }
-          runtime.state.setRescueMessage(message);
+          runtime.store.setRescueMessage(message);
           output(ctx, 'rescueMessage updated for this session');
           break;
         }
         case 'pause':
-          runtime.state.pause();
+          runtime.store.setPaused(true);
           output(ctx, 'watchdog alerting paused');
           break;
         case 'resume':
-          runtime.state.resume();
+          runtime.store.setPaused(false);
           output(ctx, 'watchdog alerting resumed');
           break;
         case 'inspect': {

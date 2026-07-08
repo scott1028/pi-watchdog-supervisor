@@ -1,7 +1,11 @@
 import type { SubagentRecordLike } from '../registry.ts';
 
 export type SubagentsIntegration =
-  | { available: true; listAgents: () => SubagentRecordLike[] }
+  | {
+      available: true;
+      listAgents: () => SubagentRecordLike[];
+      steer: (agentId: string, message: string) => Promise<boolean>;
+    }
   | { available: false; reason: string };
 
 // Lifecycle channels emitted by @gotgenes/pi-subagents on pi.events
@@ -14,7 +18,10 @@ export const SUBAGENT_EVENT_CHANNELS = [
   'subagents:compacted',
 ] as const;
 
-type ServiceLike = { listAgents: () => SubagentRecordLike[] };
+type ServiceLike = {
+  listAgents: () => SubagentRecordLike[];
+  steer: (agentId: string, message: string) => Promise<boolean>;
+};
 
 export const connectSubagents = async (): Promise<SubagentsIntegration> => {
   let getService: (() => ServiceLike | undefined) | undefined;
@@ -30,5 +37,9 @@ export const connectSubagents = async (): Promise<SubagentsIntegration> => {
   if (!service) {
     return { available: false, reason: 'subagents service not published (extension not loaded?)' };
   }
-  return { available: true, listAgents: () => service.listAgents() };
+  return {
+    available: true,
+    listAgents: () => service.listAgents(),
+    steer: (agentId, message) => service.steer(agentId, message),
+  };
 };

@@ -28,12 +28,30 @@ describe('connectSubagents', () => {
         startedAt: 1000,
       },
     ];
-    globalRecord[SERVICE_KEY] = { listAgents: () => records };
+    globalRecord[SERVICE_KEY] = { listAgents: () => records, steer: async () => true };
 
     const integration = await connectSubagents();
     expect(integration.available).toBe(true);
     if (integration.available) {
       expect(integration.listAgents()).toEqual(records);
+    }
+  });
+
+  it('exposes steer when the service is published', async () => {
+    const steered: Array<[string, string]> = [];
+    globalRecord[SERVICE_KEY] = {
+      listAgents: () => [],
+      steer: async (id: string, message: string) => {
+        steered.push([id, message]);
+        return true;
+      },
+    };
+
+    const integration = await connectSubagents();
+    expect(integration.available).toBe(true);
+    if (integration.available) {
+      await expect(integration.steer('a1', 'wake up')).resolves.toBe(true);
+      expect(steered).toEqual([['a1', 'wake up']]);
     }
   });
 });

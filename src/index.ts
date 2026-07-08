@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { loadEffectiveConfig } from './config.ts';
 import { registerWatchdogCommands } from './commands.ts';
-import { createSessionState } from './state.ts';
+import { registerWatchdogTools } from './tools.ts';
 import { createTargetRegistry } from './registry.ts';
 import { getOrCreateStore } from './store.ts';
 import { startCollector } from './collector.ts';
@@ -15,7 +15,6 @@ import {
 // (pi-subagents children always load the parent's extensions).
 export default function watchdogSupervisor(pi: ExtensionAPI) {
   const { config, warnings } = loadEffectiveConfig(process.cwd());
-  const state = createSessionState();
   const registry = createTargetRegistry();
   const store = getOrCreateStore(config.maxEventsPerAgent);
 
@@ -52,13 +51,29 @@ export default function watchdogSupervisor(pi: ExtensionAPI) {
     });
   }
 
-  registerWatchdogCommands(pi, { config, state, registry, getIntegration, store });
+  registerWatchdogCommands(pi, { config, registry, getIntegration, store });
+  registerWatchdogTools(pi, {
+    store,
+    registry,
+    getIntegration,
+    baseConfig: config,
+    now: () => Date.now(),
+  });
 
   pi.on('session_start', (_event, ctx) => {
-    // Child side: if our sessionId was registered by the parent instance, collect
     const sessionId = ctx.sessionManager.getSessionId();
     if (store.getChild(sessionId)) {
+      // Child side: collect our own tool events into the shared store
       startCollector(pi, store, sessionId, config);
+    } else {
+      // Non-child (main) side: receive alerts from watchdog tools running in
+      // child sessions. Last non-child session wins if several exist.
+      store.setAlertSink((message, severity) => {
+        pi.sendMessage(
+          { customType: 'watchdog-alert', content: message, display: true },
+          { deliverAs: 'nextTurn', triggerTurn: severity === 'critical' },
+        );
+      });
     }
 
     if (ctx.hasUI) {

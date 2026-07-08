@@ -1,4 +1,8 @@
-import type { WatchdogEvent } from './types.ts';
+import type { WatchdogConfig, WatchdogEvent } from './types.ts';
+
+export type AlertSeverity = 'info' | 'warning' | 'critical';
+
+export type AlertSink = (message: string, severity: AlertSeverity) => void;
 
 export type WatchdogStore = {
   registerChild: (sessionId: string, parentSessionId?: string) => void;
@@ -6,10 +10,19 @@ export type WatchdogStore = {
   linkAgent: (agentId: string, sessionId: string) => void;
   linkNextAgent: (agentId: string) => void;
   resolveTargetKey: (idOrSessionId: string) => string | undefined;
+  resolveAgentId: (idOrSessionId: string) => string | undefined;
   appendEvent: (sessionId: string, event: Omit<WatchdogEvent, 'id' | 'targetId'>) => void;
   getEvents: (sessionId: string, limit?: number) => WatchdogEvent[];
   getLastAlert: (targetId: string) => { at: number; evidenceKey: string } | undefined;
   recordAlert: (targetId: string, evidenceKey: string, at: number) => void;
+  isPaused: () => boolean;
+  setPaused: (paused: boolean) => void;
+  getRescueMessage: () => string | undefined;
+  setRescueMessage: (message: string) => void;
+  getConfigOverride: () => Partial<WatchdogConfig>;
+  setConfigOverride: (override: Partial<WatchdogConfig>) => void;
+  setAlertSink: (sink: AlertSink) => void;
+  alert: (message: string, severity: AlertSeverity) => boolean;
 };
 
 // Shared across all extension instances in this process (parent and child sessions)
@@ -26,6 +39,11 @@ const createStore = (maxEventsPerAgent: number): WatchdogStore => {
   // synchronous), so pairing oldest-unlinked-first is correct for serialized
   // assembly. A mismatch only affects display linkage, not event collection.
   const unlinked: string[] = [];
+  // Runtime policy shared across parent and child instances
+  let paused = false;
+  let rescueMessage: string | undefined;
+  let configOverride: Partial<WatchdogConfig> = {};
+  let alertSink: AlertSink | undefined;
 
   return {
     registerChild: (sessionId, parentSessionId) => {
@@ -52,6 +70,17 @@ const createStore = (maxEventsPerAgent: number): WatchdogStore => {
       }
       return agentToSession.get(idOrSessionId);
     },
+    resolveAgentId: (idOrSessionId) => {
+      if (agentToSession.has(idOrSessionId)) {
+        return idOrSessionId;
+      }
+      for (const [agentId, sessionId] of agentToSession) {
+        if (sessionId === idOrSessionId) {
+          return agentId;
+        }
+      }
+      return undefined;
+    },
     appendEvent: (sessionId, event) => {
       const seq = (seqs.get(sessionId) ?? 0) + 1;
       seqs.set(sessionId, seq);
@@ -69,6 +98,28 @@ const createStore = (maxEventsPerAgent: number): WatchdogStore => {
     getLastAlert: (targetId) => alerts.get(targetId),
     recordAlert: (targetId, evidenceKey, at) => {
       alerts.set(targetId, { at, evidenceKey });
+    },
+    isPaused: () => paused,
+    setPaused: (next) => {
+      paused = next;
+    },
+    getRescueMessage: () => rescueMessage,
+    setRescueMessage: (message) => {
+      rescueMessage = message;
+    },
+    getConfigOverride: () => ({ ...configOverride }),
+    setConfigOverride: (override) => {
+      configOverride = { ...configOverride, ...override };
+    },
+    setAlertSink: (sink) => {
+      alertSink = sink;
+    },
+    alert: (message, severity) => {
+      if (!alertSink) {
+        return false;
+      }
+      alertSink(message, severity);
+      return true;
     },
   };
 };
