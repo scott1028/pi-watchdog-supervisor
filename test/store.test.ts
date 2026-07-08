@@ -123,9 +123,9 @@ describe('config override (shared)', () => {
   it('starts empty and merges successive sets', () => {
     const store = getOrCreateStore(10);
     expect(store.getConfigOverride()).toEqual({});
-    store.setConfigOverride({ repeatThreshold: 5 });
+    store.setConfigOverride({ llmRepeatThreshold: 5 });
     store.setConfigOverride({ cooldownSec: 120 });
-    expect(store.getConfigOverride()).toEqual({ repeatThreshold: 5, cooldownSec: 120 });
+    expect(store.getConfigOverride()).toEqual({ llmRepeatThreshold: 5, cooldownSec: 120 });
   });
 });
 

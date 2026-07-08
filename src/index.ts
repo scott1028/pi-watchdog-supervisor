@@ -4,7 +4,9 @@ import { registerWatchdogCommands } from './commands.ts';
 import { registerWatchdogTools } from './tools.ts';
 import { createTargetRegistry } from './registry.ts';
 import { getOrCreateStore } from './store.ts';
-import { startCollector } from './collector.ts';
+import { startCollector, startLlmCollector } from './collector.ts';
+import { createStuckChecker } from './checker.ts';
+import { registerLmDebugWidget } from './lmdebug.ts';
 import {
   connectSubagents,
   SUBAGENT_EVENT_CHANNELS,
@@ -51,6 +53,7 @@ export default function watchdogSupervisor(pi: ExtensionAPI) {
     });
   }
 
+  registerLmDebugWidget(pi, config.debug);
   registerWatchdogCommands(pi, { config, registry, getIntegration, store });
   registerWatchdogTools(pi, {
     store,
@@ -62,16 +65,22 @@ export default function watchdogSupervisor(pi: ExtensionAPI) {
 
   pi.on('session_start', (_event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId();
-    if (store.getChild(sessionId)) {
-      // Child side: collect our own tool events into the shared store
-      startCollector(pi, store, sessionId, config);
-    } else {
+    // Every session (main or child) collects its own tool + llm events and
+    // self-checks on every LLM round-trip (no timer), so a stuck main session
+    // rescues itself immediately even with no watchdog sub-agent around.
+    const checkStuck = createStuckChecker(pi, store, sessionId, config);
+    startCollector(pi, store, sessionId, config);
+    startLlmCollector(pi, store, sessionId, checkStuck);
+    pi.on('after_provider_response', () => checkStuck());
+    if (!store.getChild(sessionId)) {
       // Non-child (main) side: receive alerts from watchdog tools running in
       // child sessions. Last non-child session wins if several exist.
       store.setAlertSink((message, severity) => {
         pi.sendMessage(
           { customType: 'watchdog-alert', content: message, display: true },
-          { deliverAs: 'nextTurn', triggerTurn: severity === 'critical' },
+          // 'steer' reaches a looping session; 'nextTurn' would wait for a
+          // user prompt that never comes while the agent is stuck
+          { deliverAs: 'steer', triggerTurn: severity === 'critical' },
         );
       });
     }

@@ -30,7 +30,10 @@ const formatTargets = (
     .map((target) => {
       const key = store.resolveTargetKey(target.id);
       const events = key ? store.getEvents(key) : [];
-      const analysis = events.length > 0 ? detectStuck(events, config, Date.now()) : undefined;
+      const analysis =
+        events.length > 0
+          ? detectStuck(events, config, Date.now(), store.getLastAlert(key ?? '')?.at ?? 0)
+          : undefined;
       return [
         `  [${target.kind}]`.padEnd(13),
         target.id.padEnd(10),
@@ -135,7 +138,12 @@ export const registerWatchdogCommands = (pi: ExtensionAPI, runtime: WatchdogRunt
             output(ctx, `No events recorded for ${targetId}`);
             break;
           }
-          const analysis = detectStuck(runtime.store.getEvents(key), runtime.config, Date.now());
+          const analysis = detectStuck(
+            runtime.store.getEvents(key),
+            runtime.config,
+            Date.now(),
+            runtime.store.getLastAlert(key)?.at ?? 0,
+          );
           output(
             ctx,
             `events for ${targetId} (latest ${events.length}):\n${events.map(formatEvent).join('\n')}\n` +

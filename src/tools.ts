@@ -24,13 +24,19 @@ const effectiveRescueMessage = (deps: ToolDeps): string =>
   deps.store.getRescueMessage() ?? effectiveConfig(deps).rescueMessage;
 
 const analyzeTarget = (deps: ToolDeps, targetKey: string): StuckAnalysis =>
-  detectStuck(deps.store.getEvents(targetKey), effectiveConfig(deps), deps.now());
+  detectStuck(
+    deps.store.getEvents(targetKey),
+    effectiveConfig(deps),
+    deps.now(),
+    deps.store.getLastAlert(targetKey)?.at ?? 0,
+  );
 
-// Pull the repeat count out of the repeated_command evidence summary
-const repeatedCommandCount = (analysis: StuckAnalysis): number => {
-  const summary = analysis.evidence.find((item) => item.type === 'repeated_command')?.summary;
-  const match = summary?.match(/repeated (\d+) times/);
-  return match ? Number(match[1]) : 0;
+// Pull the repeat count out of the repeated_llm_* evidence summaries
+const repeatedMessageCount = (analysis: StuckAnalysis): number => {
+  const counts = analysis.evidence
+    .filter((item) => item.type === 'repeated_llm_input' || item.type === 'repeated_llm_output')
+    .map((item) => Number(item.summary.match(/repeated (\d+) times/)?.[1] ?? 0));
+  return Math.max(0, ...counts);
 };
 
 export const executeListTargets = async (
@@ -58,7 +64,7 @@ export const executeListTargets = async (
         patchCount: key
           ? deps.store.getEvents(key).filter((event) => event.type === 'edit').length
           : 0,
-        repeatedCommandCount: analysis ? repeatedCommandCount(analysis) : 0,
+        repeatedMessageCount: analysis ? repeatedMessageCount(analysis) : 0,
         likelyStuck: analysis?.likelyStuck ?? false,
       };
     });
@@ -169,10 +175,12 @@ export const executeSteerSubagent = async (
   input: { targetId: string; message?: string; dryRun?: boolean },
 ): Promise<string> => {
   const message = input.message ?? effectiveRescueMessage(deps);
-  if (input.dryRun !== false) {
+  const config = effectiveConfig(deps);
+  // Explicit dryRun wins; otherwise use steerDryRunDefault (null = dry-run)
+  const dryRun = input.dryRun ?? config.steerDryRunDefault ?? true;
+  if (dryRun) {
     return `dry-run: would steer ${input.targetId} with:\n${message}`;
   }
-  const config = effectiveConfig(deps);
   if (config.alertMode === 'main_only') {
     return `steer refused: alertMode is main_only — update config (alertMode: direct_subagent or both) to allow direct steering`;
   }
@@ -227,7 +235,7 @@ export const registerWatchdogTools = (pi: ExtensionAPI, deps: ToolDeps) => {
     name: 'watchdog_detect_stuck',
     label: 'Watchdog: detect stuck',
     description:
-      'Run deterministic stuck analysis for one target: repeated commands/output, typecheck loops, idle without progress.',
+      'Run deterministic stuck analysis for one target: repeated LLM input/output message bodies, idle without progress.',
     parameters: Type.Object({
       targetId: Type.String(),
     }),
@@ -253,7 +261,7 @@ export const registerWatchdogTools = (pi: ExtensionAPI, deps: ToolDeps) => {
     name: 'watchdog_steer_subagent',
     label: 'Watchdog: steer sub-agent',
     description:
-      'Send a rescue message to a target sub-agent. Defaults to dry-run; real steering requires alertMode other than main_only.',
+      'Send a rescue message to a target sub-agent. Defaults to dry-run (configurable via steerDryRunDefault); real steering requires alertMode other than main_only.',
     parameters: Type.Object({
       targetId: Type.String(),
       message: Type.Optional(Type.String()),

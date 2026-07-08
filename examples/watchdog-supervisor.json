@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "rescueMessage": "The AI agent might be stuck. Stop repeating the current actions, then resume the task.",
+  "llmRepeatThreshold": 3,
+  "idleNoProgressSec": 300,
+  "cooldownSec": 0,
+  "maxPreviewLines": 20,
+  "maxEventsPerAgent": 200,
+  "alertMode": "main_only",
+  "steerDryRunDefault": null,
+  "debug": false
+}

@@ -6,46 +6,44 @@ import type {
   WatchdogEvent,
 } from './types.ts';
 
-const TYPECHECK_PATTERN = /tsc|type-?check/i;
 const RECENT_ACTIVITY_MS = 60_000;
 const MIN_TOOL_EVENTS_FOR_IDLE = 5;
 
-type CommandStats = {
-  count: number;
-  hashCounts: Map<string, number>;
-};
-
-// Count tool_result events per commandKey; an edit event resets all counts
-// (progress means earlier repetition is no longer a loop signal)
-const countCommands = (events: WatchdogEvent[]): Map<string, CommandStats> => {
-  const stats = new Map<string, CommandStats>();
+// Longest run of consecutive identical normalized-body hashes among events of
+// one LLM type, ignoring events at or before sinceAt. Consecutive (rather than
+// total) keeps ordinary re-visits of an earlier message from counting as a
+// loop; sinceAt resets the counter after an alert so a historical run does not
+// keep re-triggering once the agent has recovered.
+const longestIdenticalRun = (
+  events: WatchdogEvent[],
+  type: 'llm_input' | 'llm_output',
+  sinceAt: number,
+): { length: number; hash?: string } => {
+  let best = 0;
+  let bestHash: string | undefined;
+  let current = 0;
+  let currentHash: string | undefined;
   for (const event of events) {
-    if (event.type === 'edit') {
-      stats.clear();
+    if (event.type !== type || !event.outputHash || event.at <= sinceAt) {
       continue;
     }
-    if (event.type !== 'tool_result' || !event.commandKey) {
-      continue;
+    current = event.outputHash === currentHash ? current + 1 : 1;
+    currentHash = event.outputHash;
+    if (current > best) {
+      best = current;
+      bestHash = currentHash;
     }
-    const entry = stats.get(event.commandKey) ?? { count: 0, hashCounts: new Map() };
-    entry.count += 1;
-    if (event.outputHash) {
-      entry.hashCounts.set(event.outputHash, (entry.hashCounts.get(event.outputHash) ?? 0) + 1);
-    }
-    stats.set(event.commandKey, entry);
   }
-  return stats;
+  return { length: best, hash: bestHash };
 };
-
-const maxHashCount = (entry: CommandStats): number =>
-  Math.max(0, ...entry.hashCounts.values());
 
 const detectIdleNoProgress = (
   events: WatchdogEvent[],
   config: WatchdogConfig,
   now: number,
 ): boolean => {
-  if (events.length === 0) {
+  // idleNoProgressSec <= 0 disables this rule
+  if (config.idleNoProgressSec <= 0 || events.length === 0) {
     return false;
   }
   const last = events[events.length - 1];
@@ -72,38 +70,32 @@ export const detectStuck = (
   events: WatchdogEvent[],
   config: WatchdogConfig,
   now: number,
+  // Only events after this timestamp count toward llm repetition — pass the
+  // last alert time so the counter resets after each alert
+  sinceAt = 0,
 ): StuckAnalysis => {
   const evidence: StuckEvidence[] = [];
   const reasons: string[] = [];
   const triggers: string[] = [];
 
-  const stats = countCommands(events);
-  for (const [commandKey, entry] of stats) {
-    if (entry.count >= config.repeatThreshold) {
-      evidence.push({
-        type: 'repeated_command',
-        summary: `command repeated ${entry.count} times: ${commandKey}`,
-      });
-      reasons.push(`same command ran ${entry.count} times without progress`);
-      triggers.push(commandKey);
-      if (maxHashCount(entry) >= config.repeatThreshold) {
+  // LLM-level repetition: same normalized message body (timestamps, ids and
+  // digit runs stripped) recurring back-to-back. llmRepeatThreshold <= 0
+  // disables this rule.
+  if (config.llmRepeatThreshold > 0) {
+    const rules = [
+      { type: 'llm_input', evidenceType: 'repeated_llm_input', label: 'input sent to the LLM' },
+      { type: 'llm_output', evidenceType: 'repeated_llm_output', label: 'LLM output' },
+    ] as const;
+    for (const rule of rules) {
+      const run = longestIdenticalRun(events, rule.type, sinceAt);
+      if (run.length >= config.llmRepeatThreshold && run.hash) {
         evidence.push({
-          type: 'repeated_output',
-          summary: `identical output ${maxHashCount(entry)} times for: ${commandKey}`,
+          type: rule.evidenceType,
+          summary: `llm message repeated ${run.length} times: same ${rule.label} body (hash ${run.hash.slice(0, 8)})`,
         });
-        reasons.push('the repeated command keeps producing identical output');
+        reasons.push(`the same ${rule.label} recurred ${run.length} times in a row`);
+        triggers.push(`${rule.type}:${run.hash}`);
       }
-    }
-    if (
-      TYPECHECK_PATTERN.test(commandKey) &&
-      maxHashCount(entry) >= config.typecheckRepeatThreshold
-    ) {
-      evidence.push({
-        type: 'typecheck_loop',
-        summary: `same typecheck error ${maxHashCount(entry)} times: ${commandKey}`,
-      });
-      reasons.push('the same typecheck error keeps recurring');
-      triggers.push(commandKey);
     }
   }
 
@@ -148,6 +140,11 @@ export const shouldAlert = (
   if (!lastAlert) {
     return true;
   }
-  const inCooldown = now - lastAlert.at < cooldownSec * 1000;
+  // cooldownSec === 0: no cooldown, alert on every check that meets the threshold
+  if (cooldownSec === 0) {
+    return true;
+  }
+  // cooldownSec < 0: infinite cooldown, same evidence alerts only once
+  const inCooldown = cooldownSec < 0 || now - lastAlert.at < cooldownSec * 1000;
   return !(inCooldown && analysis.evidenceKey === lastAlert.evidenceKey);
 };

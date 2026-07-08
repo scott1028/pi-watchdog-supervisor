@@ -28,7 +28,9 @@ export type WatchdogEventType =
   | 'subagent_failed'
   | 'tool_call'
   | 'tool_result'
-  | 'edit';
+  | 'edit'
+  | 'llm_input'
+  | 'llm_output';
 
 export type WatchdogEvent = {
   id: string;
@@ -42,10 +44,9 @@ export type WatchdogEvent = {
 };
 
 export type StuckEvidenceType =
-  | 'repeated_command'
-  | 'repeated_output'
-  | 'idle_no_progress'
-  | 'typecheck_loop';
+  | 'repeated_llm_input'
+  | 'repeated_llm_output'
+  | 'idle_no_progress';
 
 export type StuckEvidence = {
   type: StuckEvidenceType;
@@ -63,11 +64,17 @@ export type StuckAnalysis = {
 export type WatchdogConfig = {
   enabled: boolean;
   rescueMessage: string;
-  repeatThreshold: number;
-  typecheckRepeatThreshold: number;
+  // Identical (normalized) LLM message bodies in a row to count as a loop; 0 disables
+  llmRepeatThreshold: number;
   idleNoProgressSec: number;
   cooldownSec: number;
   maxPreviewLines: number;
   maxEventsPerAgent: number;
   alertMode: AlertMode;
+  // Default for watchdog_steer_subagent's dryRun when the call omits it;
+  // null keeps the built-in safe default (dry-run)
+  steerDryRunDefault: boolean | null;
+  // Show the lm-debug console below the editor with the full latest
+  // sent/received LLM messages (newlines preserved, untruncated)
+  debug: boolean;
 };

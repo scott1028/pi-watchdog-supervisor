@@ -21,63 +21,91 @@ const ev = (
   outputHash,
 });
 
-// Three same-command results with same hash, recent activity
-const repeatedResults = (commandKey: string, hash: string | ((i: number) => string)) =>
-  [0, 1, 2].map((i) =>
-    ev('tool_result', NOW - 10_000 + i * 1000, commandKey, typeof hash === 'string' ? hash : hash(i)),
+// N consecutive llm events of one type with configurable body hashes
+const llmRun = (
+  type: 'llm_input' | 'llm_output',
+  count: number,
+  hash: string | ((i: number) => string),
+) =>
+  Array.from({ length: count }, (_, i) =>
+    ev(type, NOW - 10_000 + i * 1000, type, typeof hash === 'string' ? hash : hash(i)),
   );
 
-describe('detectStuck: repeated command/output', () => {
-  it('flags repeated_command and repeated_output for 3x same command + same hash', () => {
-    const analysis = detectStuck(repeatedResults('rg "TOKEN" src', 'h1'), DEFAULT_CONFIG, NOW);
-    expect(analysis.likelyStuck).toBe(true);
-    expect(analysis.confidence).toBe('high');
-    const types = analysis.evidence.map((item) => item.type);
-    expect(types).toContain('repeated_command');
-    expect(types).toContain('repeated_output');
-  });
-
-  it('flags only repeated_command when hashes differ', () => {
-    const analysis = detectStuck(
-      repeatedResults('rg "TOKEN" src', (i) => `h${i}`),
-      DEFAULT_CONFIG,
-      NOW,
-    );
+describe('detectStuck: repeated llm messages', () => {
+  it('flags repeated_llm_output for 3x identical normalized output body', () => {
+    const analysis = detectStuck(llmRun('llm_output', 3, 'body-1'), DEFAULT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(true);
     expect(analysis.confidence).toBe('medium');
-    expect(analysis.evidence.map((item) => item.type)).toEqual(['repeated_command']);
+    expect(analysis.evidence.map((item) => item.type)).toEqual(['repeated_llm_output']);
   });
 
-  it('does not flag 2x same command', () => {
-    const events = repeatedResults('rg "TOKEN" src', 'h1').slice(0, 2);
+  it('flags repeated_llm_input for 3x identical input body', () => {
+    const analysis = detectStuck(llmRun('llm_input', 3, 'body-1'), DEFAULT_CONFIG, NOW);
+    expect(analysis.evidence.map((item) => item.type)).toEqual(['repeated_llm_input']);
+  });
+
+  it('flags both types with high confidence when input and output both loop', () => {
+    const events = [0, 1, 2].flatMap((i) => [
+      ev('llm_input', NOW - 10_000 + i * 2000, 'llm_input', 'in-same'),
+      ev('llm_output', NOW - 9000 + i * 2000, 'llm_output', 'out-same'),
+    ]);
     const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
+    expect(analysis.likelyStuck).toBe(true);
+    expect(analysis.confidence).toBe('high');
+  });
+
+  it('does not flag 2x identical body', () => {
+    const analysis = detectStuck(llmRun('llm_output', 2, 'body-1'), DEFAULT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(false);
-    expect(analysis.confidence).toBe('low');
     expect(analysis.evidence).toEqual([]);
   });
 
-  it('resets command counts when an edit happens in between', () => {
-    const [first, second, third] = repeatedResults('rg "TOKEN" src', 'h1');
-    const events = [first, second, ev('edit', NOW - 8500, 'edit src/a.ts'), third];
+  it('does not flag when bodies differ', () => {
+    const analysis = detectStuck(llmRun('llm_output', 5, (i) => `body-${i}`), DEFAULT_CONFIG, NOW);
+    expect(analysis.likelyStuck).toBe(false);
+  });
+
+  it('requires the repeats to be consecutive', () => {
+    const events = [
+      ...llmRun('llm_output', 2, 'body-1'),
+      ev('llm_output', NOW - 7000, 'llm_output', 'body-other'),
+      ev('llm_output', NOW - 6000, 'llm_output', 'body-1'),
+    ];
     const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(false);
   });
-});
 
-describe('detectStuck: typecheck loop', () => {
-  it('flags typecheck_loop for 2x same typecheck error output', () => {
-    const events = [
-      ev('tool_result', NOW - 5000, 'npm run type-check', 'err1'),
-      ev('tool_result', NOW - 3000, 'npm run type-check', 'err1'),
-    ];
-    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
-    expect(analysis.evidence.map((item) => item.type)).toContain('typecheck_loop');
+  it('resets the counter via sinceAt: only events after the last alert count', () => {
+    const events = llmRun('llm_output', 5, 'body-1');
+    // alert happened after the 3rd event → only 2 remain countable
+    const sinceAt = events[2].at;
+    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW, sinceAt);
+    expect(analysis.likelyStuck).toBe(false);
+    // three more repeats after the alert → triggers again
+    const more = [...events, ...llmRun('llm_output', 1, 'body-1').map((e) => ({ ...e, at: NOW - 1000 }))];
+    expect(detectStuck(more, DEFAULT_CONFIG, NOW, sinceAt).likelyStuck).toBe(true);
+  });
+
+  it('counts the full buffer when sinceAt is omitted', () => {
+    const analysis = detectStuck(llmRun('llm_output', 3, 'body-1'), DEFAULT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(true);
+  });
+
+  it('ignores interleaved tool events when counting the run', () => {
+    const events = [0, 1, 2].flatMap((i) => [
+      ev('llm_output', NOW - 10_000 + i * 2000, 'llm_output', 'out-same'),
+      ev('tool_result', NOW - 9500 + i * 2000, 'edit src/a.ts', `tool-${i}`),
+      ev('edit', NOW - 9200 + i * 2000, 'edit src/a.ts'),
+    ]);
+    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
+    expect(analysis.evidence.map((item) => item.type)).toEqual(['repeated_llm_output']);
   });
 });
 
 describe('detectStuck: idle no progress', () => {
-  const IDLE = DEFAULT_CONFIG.idleNoProgressSec * 1000;
+  // R4 is disabled by default (idleNoProgressSec: 0); enable it for these tests
+  const IDLE_CONFIG = { ...DEFAULT_CONFIG, idleNoProgressSec: 300 };
+  const IDLE = IDLE_CONFIG.idleNoProgressSec * 1000;
 
   const busyNoEditEvents = (toolEventCount: number) =>
     Array.from({ length: toolEventCount }, (_, i) =>
@@ -91,7 +119,7 @@ describe('detectStuck: idle no progress', () => {
 
   it('flags idle_no_progress when tools keep running without edits', () => {
     const events = [...busyNoEditEvents(6), ev('tool_call', NOW - 30_000, 'cmd-last')];
-    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(events, IDLE_CONFIG, NOW);
     expect(analysis.evidence.map((item) => item.type)).toContain('idle_no_progress');
   });
 
@@ -101,29 +129,44 @@ describe('detectStuck: idle no progress', () => {
       ev('tool_result', NOW - IDLE - 9000, 'cmd-a', 'ha'),
       ev('tool_call', NOW - 30_000, 'cmd-b'),
     ];
-    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(events, IDLE_CONFIG, NOW);
     expect(analysis.evidence.map((item) => item.type)).not.toContain('idle_no_progress');
   });
 
   it('does not flag when the agent has gone quiet', () => {
     const events = busyNoEditEvents(6).map((event) => ({ ...event, at: event.at - 120_000 }));
-    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(events, IDLE_CONFIG, NOW);
     expect(analysis.evidence.map((item) => item.type)).not.toContain('idle_no_progress');
   });
 
   it('does not flag when a recent edit shows progress', () => {
     const events = [...busyNoEditEvents(6), ev('edit', NOW - 60_000, 'edit src/a.ts'), ev('tool_call', NOW - 30_000, 'cmd-last')];
+    const analysis = detectStuck(events, IDLE_CONFIG, NOW);
+    expect(analysis.evidence.map((item) => item.type)).not.toContain('idle_no_progress');
+  });
+
+  it('is disabled when idleNoProgressSec is 0 (the default)', () => {
+    const events = [...busyNoEditEvents(6), ev('tool_call', NOW - 30_000, 'cmd-last')];
     const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
     expect(analysis.evidence.map((item) => item.type)).not.toContain('idle_no_progress');
   });
 });
 
+describe('detectStuck: zero thresholds disable rules', () => {
+  it('never flags llm repetition when llmRepeatThreshold is 0', () => {
+    const config = { ...DEFAULT_CONFIG, llmRepeatThreshold: 0 };
+    const analysis = detectStuck(llmRun('llm_output', 5, 'body-1'), config, NOW);
+    expect(analysis.likelyStuck).toBe(false);
+    expect(analysis.evidence).toEqual([]);
+  });
+});
+
 describe('detectStuck: evidenceKey and empty buffer', () => {
   it('is stable for the same input and differs across evidence sets', () => {
-    const repeated = repeatedResults('rg "TOKEN" src', 'h1');
+    const repeated = llmRun('llm_output', 3, 'body-1');
     const first = detectStuck(repeated, DEFAULT_CONFIG, NOW);
     const second = detectStuck(repeated, DEFAULT_CONFIG, NOW);
-    const other = detectStuck(repeatedResults('rg "OTHER" src', (i) => `x${i}`), DEFAULT_CONFIG, NOW);
+    const other = detectStuck(llmRun('llm_input', 3, 'body-2'), DEFAULT_CONFIG, NOW);
     expect(first.evidenceKey).toBe(second.evidenceKey);
     expect(first.evidenceKey).not.toBe(other.evidenceKey);
   });
@@ -136,9 +179,9 @@ describe('detectStuck: evidenceKey and empty buffer', () => {
 });
 
 describe('shouldAlert', () => {
-  const stuck = detectStuck(repeatedResults('rg "TOKEN" src', 'h1'), DEFAULT_CONFIG, NOW);
+  const stuck = detectStuck(llmRun('llm_output', 3, 'body-1'), DEFAULT_CONFIG, NOW);
   const calm = detectStuck([], DEFAULT_CONFIG, NOW);
-  const COOLDOWN = DEFAULT_CONFIG.cooldownSec;
+  const COOLDOWN = 60;
 
   it('never alerts when not stuck', () => {
     expect(shouldAlert(undefined, calm, NOW, COOLDOWN)).toBe(false);
@@ -161,5 +204,21 @@ describe('shouldAlert', () => {
   it('alerts again after cooldown expires', () => {
     const lastAlert = { at: NOW - COOLDOWN * 1000 - 1, evidenceKey: stuck.evidenceKey };
     expect(shouldAlert(lastAlert, stuck, NOW, COOLDOWN)).toBe(true);
+  });
+
+  it('treats cooldownSec -1 as infinite: same evidence alerts only once', () => {
+    const lastAlert = { at: NOW - 999_999_999, evidenceKey: stuck.evidenceKey };
+    expect(shouldAlert(lastAlert, stuck, NOW, -1)).toBe(false);
+  });
+
+  it('still alerts for new evidence when cooldownSec is -1', () => {
+    const lastAlert = { at: NOW - 30_000, evidenceKey: 'other-key' };
+    expect(shouldAlert(lastAlert, stuck, NOW, -1)).toBe(true);
+  });
+
+  it('treats cooldownSec 0 (the default) as no cooldown: same evidence alerts every time', () => {
+    const lastAlert = { at: NOW - 1, evidenceKey: stuck.evidenceKey };
+    expect(shouldAlert(lastAlert, stuck, NOW, 0)).toBe(true);
+    expect(shouldAlert(lastAlert, stuck, NOW, DEFAULT_CONFIG.cooldownSec)).toBe(true);
   });
 });

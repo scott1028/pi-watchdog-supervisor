@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { startCollector } from '../src/collector.ts';
+import { startCollector, startLlmCollector } from '../src/collector.ts';
 import { getOrCreateStore, resetStoreForTest } from '../src/store.ts';
 import { DEFAULT_CONFIG } from '../src/config.ts';
 
@@ -109,6 +109,93 @@ describe('startCollector', () => {
       toolName: 'bash',
       input: { command: 'ls' },
     });
+    expect(store.getEvents('sess-1')).toEqual([]);
+  });
+});
+
+describe('startLlmCollector', () => {
+  it('records the last payload message as llm_input with a normalized-body hash', () => {
+    const store = getOrCreateStore(10);
+    const { pi, emit } = createFakePi();
+    startLlmCollector(pi, store, 'sess-1');
+    emit('before_provider_request', {
+      type: 'before_provider_request',
+      payload: {
+        messages: [
+          { role: 'system', content: 'sys' },
+          { role: 'user', content: 'fix bug at 2026-07-08T14:15:23Z run #17' },
+        ],
+      },
+    });
+    const events = store.getEvents('sess-1');
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('llm_input');
+    expect(events[0]?.commandKey).toBe('llm_input');
+    expect(events[0]?.outputHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(events[0]?.outputPreview).toContain('user: fix bug at <ts> run #<n>');
+  });
+
+  it('hashes identically when bodies differ only in timestamps/ids', () => {
+    const store = getOrCreateStore(10);
+    const { pi, emit } = createFakePi();
+    startLlmCollector(pi, store, 'sess-1');
+    const send = (text: string) =>
+      emit('before_provider_request', {
+        type: 'before_provider_request',
+        payload: { messages: [{ role: 'user', content: text }] },
+      });
+    send('retry at 2026-07-08T14:15:23Z seq 17');
+    send('retry at 2026-07-08T14:16:41Z seq 42');
+    const [first, second] = store.getEvents('sess-1');
+    expect(first?.outputHash).toBe(second?.outputHash);
+  });
+
+  it('records assistant message_end as llm_output including tool calls', () => {
+    const store = getOrCreateStore(10);
+    const { pi, emit } = createFakePi();
+    startLlmCollector(pi, store, 'sess-1');
+    emit('message_end', {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'I need to edit the file' },
+          { type: 'text', text: 'Editing now' },
+          { type: 'toolCall', id: 'tc-1', name: 'edit', arguments: { path: 'a.ts' } },
+        ],
+      },
+    });
+    const events = store.getEvents('sess-1');
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('llm_output');
+    expect(events[0]?.outputPreview).toContain('toolCall edit');
+  });
+
+  it('invokes onEvent after each recorded llm event (event-driven check hook)', () => {
+    const store = getOrCreateStore(10);
+    const { pi, emit } = createFakePi();
+    let calls = 0;
+    startLlmCollector(pi, store, 'sess-1', () => {
+      calls += 1;
+      expect(store.getEvents('sess-1').length).toBe(calls);
+    });
+    emit('before_provider_request', {
+      type: 'before_provider_request',
+      payload: { messages: [{ role: 'user', content: 'go' }] },
+    });
+    emit('message_end', {
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+    });
+    expect(calls).toBe(2);
+  });
+
+  it('ignores non-assistant message_end and malformed payloads', () => {
+    const store = getOrCreateStore(10);
+    const { pi, emit } = createFakePi();
+    startLlmCollector(pi, store, 'sess-1');
+    emit('message_end', { type: 'message_end', message: { role: 'toolResult', content: [] } });
+    emit('before_provider_request', { type: 'before_provider_request', payload: null });
     expect(store.getEvents('sess-1')).toEqual([]);
   });
 });

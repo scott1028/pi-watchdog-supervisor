@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hashOutput, normalizeCommand } from '../src/normalize.ts';
+import { hashOutput, normalizeCommand, normalizeLlmBody } from '../src/normalize.ts';
 
 describe('normalizeCommand', () => {
   it('strips ANSI escape codes', () => {
@@ -12,6 +12,28 @@ describe('normalizeCommand', () => {
 
   it('returns empty string for whitespace-only input', () => {
     expect(normalizeCommand('   \t  ')).toBe('');
+  });
+});
+
+describe('normalizeLlmBody', () => {
+  it('makes bodies differing only in timestamps identical', () => {
+    const a = normalizeLlmBody('done at 2026-07-08T14:15:23.018Z, retry 10:15:46 PM');
+    const b = normalizeLlmBody('done at 2026-07-08T14:16:41.777Z, retry 10:17:02 PM');
+    expect(a).toBe(b);
+  });
+
+  it('makes bodies differing only in ids and sequence numbers identical', () => {
+    const a = normalizeLlmBody('call tc-17 session 019f4213-974b-742e-883c-12f525463fb2 hash a1b2c3d4e5f6');
+    const b = normalizeLlmBody('call tc-42 session 22222222-974b-742e-883c-125254632222 hash ffffffffffff');
+    expect(a).toBe(b);
+  });
+
+  it('keeps genuinely different bodies different', () => {
+    expect(normalizeLlmBody('read file a.ts')).not.toBe(normalizeLlmBody('edit file a.ts'));
+  });
+
+  it('collapses whitespace and strips ANSI', () => {
+    expect(normalizeLlmBody('\u001b[31mok\u001b[0m   done\n\n now')).toBe('ok done now');
   });
 });
 

@@ -51,15 +51,20 @@ const availableIntegration = (
   },
 });
 
-// Feed N repeated tool_result events so the detector flags repeated_command
-const feedRepeatedResults = (deps: ToolDeps, sessionId: string, times: number) => {
+// Feed N repeated llm_output events so the detector flags repeated_llm_output
+const feedRepeatedResults = (
+  deps: ToolDeps,
+  sessionId: string,
+  times: number,
+  baseAt = NOW - times * 1000,
+) => {
   deps.store.registerChild(sessionId);
   for (let i = 0; i < times; i += 1) {
     deps.store.appendEvent(sessionId, {
-      at: NOW - (times - i) * 1000,
-      type: 'tool_result',
-      summary: 'bash result',
-      commandKey: 'rg "TOKEN" src',
+      at: baseAt + i * 1000,
+      type: 'llm_output',
+      summary: 'llm_output: same body',
+      commandKey: 'llm_output',
       outputHash: 'hash-same',
     });
   }
@@ -93,7 +98,7 @@ describe('executeListTargets', () => {
     deps.store.linkAgent('agent-1', 'sess-1');
     const parsed = JSON.parse(await executeListTargets(deps, {}));
     expect(parsed.targets[0].likelyStuck).toBe(true);
-    expect(parsed.targets[0].repeatedCommandCount).toBe(3);
+    expect(parsed.targets[0].repeatedMessageCount).toBe(3);
   });
 });
 
@@ -117,7 +122,7 @@ describe('executeDetectStuck', () => {
     feedRepeatedResults(deps, 'sess-1', 3);
     const parsed = JSON.parse(executeDetectStuck(deps, { targetId: 'sess-1' }));
     expect(parsed.likelyStuck).toBe(true);
-    expect(parsed.evidence.some((e: { type: string }) => e.type === 'repeated_command')).toBe(true);
+    expect(parsed.evidence.some((e: { type: string }) => e.type === 'repeated_llm_output')).toBe(true);
     expect(parsed.suggestedRescueMessage).toBe(DEFAULT_CONFIG.rescueMessage);
   });
 
@@ -151,13 +156,27 @@ describe('executeAlertMain', () => {
     expect(deps.store.getLastAlert('sess-1')).toBeDefined();
   });
 
-  it('suppresses a repeat alert for the same evidence within cooldown', () => {
+  it('suppresses a repeat alert for the same evidence within a positive cooldown', () => {
+    const deps = makeDeps();
+    deps.store.setConfigOverride({ cooldownSec: 60 });
+    feedRepeatedResults(deps, 'sess-1', 3);
+    deps.store.setAlertSink(() => {});
+    executeAlertMain(deps, { targetId: 'sess-1', message: 'stuck!' });
+    // the loop keeps repeating after the alert, but the cooldown blocks a re-alert
+    feedRepeatedResults(deps, 'sess-1', 3, NOW + 1000);
+    const second = executeAlertMain(deps, { targetId: 'sess-1', message: 'stuck!' });
+    expect(second).toContain('cooldown');
+  });
+
+  it('re-alerts with the default no-cooldown (0) once the loop repeats after the alert', () => {
     const deps = makeDeps();
     feedRepeatedResults(deps, 'sess-1', 3);
     deps.store.setAlertSink(() => {});
     executeAlertMain(deps, { targetId: 'sess-1', message: 'stuck!' });
+    // counter resets at the alert; fresh repeats after it re-trigger
+    feedRepeatedResults(deps, 'sess-1', 3, NOW + 1000);
     const second = executeAlertMain(deps, { targetId: 'sess-1', message: 'stuck!' });
-    expect(second).toContain('cooldown');
+    expect(second).toContain('alert sent to main session');
   });
 
   it('reports a missing sink as an error', () => {
@@ -199,14 +218,54 @@ describe('executeSteerSubagent', () => {
     expect(result).toContain('steered');
     expect(steered).toEqual([['agent-1', 'wake up']]);
   });
+
+  it('steers without an explicit dryRun when steerDryRunDefault is false', async () => {
+    const steered: Array<[string, string]> = [];
+    const deps = makeDeps({
+      baseConfig: { ...DEFAULT_CONFIG, alertMode: 'both', steerDryRunDefault: false },
+      getIntegration: async () => availableIntegration([record()], steered),
+    });
+    deps.store.registerChild('sess-1');
+    deps.store.linkAgent('agent-1', 'sess-1');
+    const result = await executeSteerSubagent(deps, { targetId: 'sess-1', message: 'wake up' });
+    expect(result).toContain('steered');
+    expect(steered).toEqual([['agent-1', 'wake up']]);
+  });
+
+  it('keeps the dry-run default when steerDryRunDefault is null', async () => {
+    const deps = makeDeps({
+      baseConfig: { ...DEFAULT_CONFIG, alertMode: 'both', steerDryRunDefault: null },
+    });
+    deps.store.registerChild('sess-1');
+    const result = await executeSteerSubagent(deps, { targetId: 'sess-1' });
+    expect(result).toContain('would steer');
+  });
+
+  it('keeps an explicit dryRun: true even when steerDryRunDefault is false', async () => {
+    const deps = makeDeps({
+      baseConfig: { ...DEFAULT_CONFIG, alertMode: 'both', steerDryRunDefault: false },
+    });
+    deps.store.registerChild('sess-1');
+    const result = await executeSteerSubagent(deps, { targetId: 'sess-1', dryRun: true });
+    expect(result).toContain('would steer');
+  });
+
+  it('still refuses in main_only mode when steerDryRunDefault is false', async () => {
+    const deps = makeDeps({
+      baseConfig: { ...DEFAULT_CONFIG, steerDryRunDefault: false },
+    });
+    deps.store.registerChild('sess-1');
+    const result = await executeSteerSubagent(deps, { targetId: 'sess-1' });
+    expect(result).toContain('main_only');
+  });
 });
 
 describe('executeConfig', () => {
   it('returns the effective config including overrides', () => {
     const deps = makeDeps();
-    deps.store.setConfigOverride({ repeatThreshold: 7 });
+    deps.store.setConfigOverride({ llmRepeatThreshold: 7 });
     const parsed = JSON.parse(executeConfig(deps, { action: 'get' }));
-    expect(parsed.repeatThreshold).toBe(7);
+    expect(parsed.llmRepeatThreshold).toBe(7);
     expect(parsed.alertMode).toBe(DEFAULT_CONFIG.alertMode);
   });
 
@@ -237,17 +296,16 @@ describe('formatAlert', () => {
         '',
         'Target: sess-1',
         'Status: likely stuck',
-        'Confidence: high',
+        'Confidence: medium',
         '',
         'Evidence:',
-        '- command repeated 3 times: rg "TOKEN" src',
-        '- identical output 3 times for: rg "TOKEN" src',
+        '- llm message repeated 3 times: same LLM output body (hash hash-sam)',
         '',
         'Note:',
         'stuck!',
         '',
         'Last command:',
-        'rg "TOKEN" src',
+        'llm_output',
         '',
         'Suggested rescue:',
         DEFAULT_CONFIG.rescueMessage,

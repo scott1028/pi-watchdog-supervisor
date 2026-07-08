@@ -6,14 +6,15 @@ import type { WatchdogConfig } from './types.ts';
 export const DEFAULT_CONFIG: WatchdogConfig = {
   enabled: true,
   rescueMessage:
-    'AI agent 是不是卡死了?\n請停止目前重複動作，總結你已知的資訊，重新規劃下一步。\n不要再執行相同 command，除非 query 或 path 有改變。',
-  repeatThreshold: 3,
-  typecheckRepeatThreshold: 2,
-  idleNoProgressSec: 300,
-  cooldownSec: 60,
+    'The AI agent might be stuck. Stop repeating the current actions, then resume the task.',
+  llmRepeatThreshold: 3,
+  idleNoProgressSec: 0, // 0 = idle_no_progress detection disabled
+  cooldownSec: 0, // 0 = no cooldown; -1 = same evidence alerts once; >0 = seconds
   maxPreviewLines: 20,
   maxEventsPerAgent: 200,
   alertMode: 'main_only',
+  steerDryRunDefault: null, // null = built-in safe default (dry-run)
+  debug: false, // show the lm-debug console (full sent/received messages)
 };
 
 export const getConfigPaths = (projectDir: string) => ({

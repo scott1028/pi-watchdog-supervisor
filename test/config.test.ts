@@ -27,14 +27,15 @@ afterEach(() => {
 describe('DEFAULT_CONFIG', () => {
   it('has the documented default values', () => {
     expect(DEFAULT_CONFIG.enabled).toBe(true);
-    expect(DEFAULT_CONFIG.rescueMessage).toContain('AI agent 是不是卡死了?');
-    expect(DEFAULT_CONFIG.repeatThreshold).toBe(3);
-    expect(DEFAULT_CONFIG.typecheckRepeatThreshold).toBe(2);
-    expect(DEFAULT_CONFIG.idleNoProgressSec).toBe(300);
-    expect(DEFAULT_CONFIG.cooldownSec).toBe(60);
+    expect(DEFAULT_CONFIG.rescueMessage).toContain('might be stuck');
+    expect(DEFAULT_CONFIG.llmRepeatThreshold).toBe(3);
+    expect(DEFAULT_CONFIG.idleNoProgressSec).toBe(0);
+    expect(DEFAULT_CONFIG.cooldownSec).toBe(0);
     expect(DEFAULT_CONFIG.maxPreviewLines).toBe(20);
     expect(DEFAULT_CONFIG.maxEventsPerAgent).toBe(200);
     expect(DEFAULT_CONFIG.alertMode).toBe('main_only');
+    expect(DEFAULT_CONFIG.steerDryRunDefault).toBeNull();
+    expect(DEFAULT_CONFIG.debug).toBe(false);
   });
 });
 
@@ -58,9 +59,9 @@ describe('loadConfigFile', () => {
   it('returns parsed partial config for a valid file', () => {
     const dir = makeTempDir();
     const path = join(dir, 'config.json');
-    writeFileSync(path, JSON.stringify({ repeatThreshold: 5 }));
+    writeFileSync(path, JSON.stringify({ llmRepeatThreshold: 5 }));
     const { config, warning } = loadConfigFile(path);
-    expect(config).toEqual({ repeatThreshold: 5 });
+    expect(config).toEqual({ llmRepeatThreshold: 5 });
     expect(warning).toBeUndefined();
   });
 
@@ -76,9 +77,9 @@ describe('loadConfigFile', () => {
   it('ignores unknown fields', () => {
     const dir = makeTempDir();
     const path = join(dir, 'config.json');
-    writeFileSync(path, JSON.stringify({ repeatThreshold: 5, bogus: true }));
+    writeFileSync(path, JSON.stringify({ llmRepeatThreshold: 5, bogus: true }));
     const { config } = loadConfigFile(path);
-    expect(config).toEqual({ repeatThreshold: 5 });
+    expect(config).toEqual({ llmRepeatThreshold: 5 });
   });
 });
 
@@ -89,17 +90,17 @@ describe('mergeConfig', () => {
   });
 
   it('overrides defaults with global values, keeping unspecified defaults', () => {
-    const merged = mergeConfig({ repeatThreshold: 10 });
-    expect(merged.repeatThreshold).toBe(10);
+    const merged = mergeConfig({ llmRepeatThreshold: 10 });
+    expect(merged.llmRepeatThreshold).toBe(10);
     expect(merged.cooldownSec).toBe(DEFAULT_CONFIG.cooldownSec);
   });
 
   it('lets later parts (project) override earlier parts (global)', () => {
     const merged = mergeConfig(
-      { repeatThreshold: 10, cooldownSec: 120 },
-      { repeatThreshold: 7 },
+      { llmRepeatThreshold: 10, cooldownSec: 120 },
+      { llmRepeatThreshold: 7 },
     );
-    expect(merged.repeatThreshold).toBe(7);
+    expect(merged.llmRepeatThreshold).toBe(7);
     expect(merged.cooldownSec).toBe(120);
     expect(merged.idleNoProgressSec).toBe(DEFAULT_CONFIG.idleNoProgressSec);
   });
@@ -111,10 +112,10 @@ describe('loadEffectiveConfig', () => {
     mkdirSync(join(projectDir, '.pi'));
     writeFileSync(
       join(projectDir, '.pi', 'watchdog-supervisor.json'),
-      JSON.stringify({ repeatThreshold: 5 }),
+      JSON.stringify({ llmRepeatThreshold: 5 }),
     );
     const { config, warnings } = loadEffectiveConfig(projectDir);
-    expect(config.repeatThreshold).toBe(5);
+    expect(config.llmRepeatThreshold).toBe(5);
     expect(config.alertMode).toBe('main_only');
     expect(warnings).toEqual([]);
   });
@@ -124,7 +125,7 @@ describe('loadEffectiveConfig', () => {
     mkdirSync(join(projectDir, '.pi'));
     writeFileSync(join(projectDir, '.pi', 'watchdog-supervisor.json'), '{ oops');
     const { config, warnings } = loadEffectiveConfig(projectDir);
-    expect(config.repeatThreshold).toBe(DEFAULT_CONFIG.repeatThreshold);
+    expect(config.llmRepeatThreshold).toBe(DEFAULT_CONFIG.llmRepeatThreshold);
     expect(warnings).toHaveLength(1);
   });
 });
