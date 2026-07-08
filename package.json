@@ -1,0 +1,24 @@
+{
+  "name": "pi-watchdog-supervisor",
+  "version": "0.1.0",
+  "description": "Pi extension: watchdog supervisor for task sub-agents",
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.3",
+    "@types/node": "^26.1.1",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  }
+}
