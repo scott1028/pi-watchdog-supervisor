@@ -6,8 +6,8 @@ import type { WatchdogConfig } from './types.ts';
 export const DEFAULT_CONFIG: WatchdogConfig = {
   enabled: true,
   rescueMessage:
-    'The AI agent might be stuck. Stop repeating the current actions, then resume the task.',
-  llmRepeatThreshold: 3,
+    'The AI agent appears to be stuck in a dead loop. Fix it, then continue the work.',
+  llmRepeatThreshold: 10,
   idleNoProgressSec: 0, // 0 = idle_no_progress detection disabled
   cooldownSec: 0, // 0 = no cooldown; -1 = same evidence alerts once; >0 = seconds
   maxPreviewLines: 20,

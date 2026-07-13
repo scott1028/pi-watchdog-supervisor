@@ -1,7 +1,7 @@
 {
   "enabled": true,
-  "rescueMessage": "The AI agent might be stuck. Stop repeating the current actions, then resume the task.",
-  "llmRepeatThreshold": 3,
+  "rescueMessage": "The AI agent appears to be stuck in a dead loop. Fix it, then continue the work.",
+  "llmRepeatThreshold": 10,
   "idleNoProgressSec": 300,
   "cooldownSec": 0,
   "maxPreviewLines": 20,

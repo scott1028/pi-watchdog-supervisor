@@ -27,8 +27,10 @@ afterEach(() => {
 describe('DEFAULT_CONFIG', () => {
   it('has the documented default values', () => {
     expect(DEFAULT_CONFIG.enabled).toBe(true);
-    expect(DEFAULT_CONFIG.rescueMessage).toContain('might be stuck');
-    expect(DEFAULT_CONFIG.llmRepeatThreshold).toBe(3);
+    expect(DEFAULT_CONFIG.rescueMessage).toBe(
+      'The AI agent appears to be stuck in a dead loop. Fix it, then continue the work.',
+    );
+    expect(DEFAULT_CONFIG.llmRepeatThreshold).toBe(10);
     expect(DEFAULT_CONFIG.idleNoProgressSec).toBe(0);
     expect(DEFAULT_CONFIG.cooldownSec).toBe(0);
     expect(DEFAULT_CONFIG.maxPreviewLines).toBe(20);

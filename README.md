@@ -82,7 +82,7 @@ runs are replaced with placeholders — so two loop iterations that differ only
 in time or sequence markers compare as identical.
 
 - `repeated_llm_input`: the same normalized input body sent to the LLM ≥
-  `llmRepeatThreshold` (3) times in a row.
+  `llmRepeatThreshold` (10) times in a row.
 - `repeated_llm_output`: the same normalized assistant output body (text +
   thinking + tool calls with arguments) ≥ `llmRepeatThreshold` times in a row.
 - `idle_no_progress`: tools keep running but no edit/write for ≥
@@ -137,7 +137,7 @@ Project config `.pi/watchdog-supervisor.json` overrides global config
 [examples/watchdog-supervisor.json](examples/watchdog-supervisor.json) for all
 fields (values match the defaults, except `idleNoProgressSec` which is shown
 enabled at `300`; its default is `0` = disabled). The default `rescueMessage`
-asks the agent to stop repeating the current actions and resume the task —
+reports a dead loop and asks the agent to fix it, then continue the work —
 override it per project or per session as needed.
 
 Set `debug: true` (default `false`) to show a debug console below the editor

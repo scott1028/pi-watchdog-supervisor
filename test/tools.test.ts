@@ -94,11 +94,11 @@ describe('executeListTargets', () => {
     const deps = makeDeps({
       getIntegration: async () => availableIntegration([record()]),
     });
-    feedRepeatedResults(deps, 'sess-1', 3);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold);
     deps.store.linkAgent('agent-1', 'sess-1');
     const parsed = JSON.parse(await executeListTargets(deps, {}));
     expect(parsed.targets[0].likelyStuck).toBe(true);
-    expect(parsed.targets[0].repeatedMessageCount).toBe(3);
+    expect(parsed.targets[0].repeatedMessageCount).toBe(DEFAULT_CONFIG.llmRepeatThreshold);
   });
 });
 
@@ -119,7 +119,7 @@ describe('executeReadEvents', () => {
 describe('executeDetectStuck', () => {
   it('includes analysis and the suggested rescue message', () => {
     const deps = makeDeps();
-    feedRepeatedResults(deps, 'sess-1', 3);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold);
     const parsed = JSON.parse(executeDetectStuck(deps, { targetId: 'sess-1' }));
     expect(parsed.likelyStuck).toBe(true);
     expect(parsed.evidence.some((e: { type: string }) => e.type === 'repeated_llm_output')).toBe(true);
@@ -128,7 +128,7 @@ describe('executeDetectStuck', () => {
 
   it('prefers the shared rescue message override', () => {
     const deps = makeDeps();
-    feedRepeatedResults(deps, 'sess-1', 3);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold);
     deps.store.setRescueMessage('custom rescue');
     const parsed = JSON.parse(executeDetectStuck(deps, { targetId: 'sess-1' }));
     expect(parsed.suggestedRescueMessage).toBe('custom rescue');
@@ -144,7 +144,7 @@ describe('executeAlertMain', () => {
 
   it('delivers the alert to the sink and records it', () => {
     const deps = makeDeps();
-    feedRepeatedResults(deps, 'sess-1', 3);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold);
     const received: string[] = [];
     deps.store.setAlertSink((message) => {
       received.push(message);
@@ -159,29 +159,29 @@ describe('executeAlertMain', () => {
   it('suppresses a repeat alert for the same evidence within a positive cooldown', () => {
     const deps = makeDeps();
     deps.store.setConfigOverride({ cooldownSec: 60 });
-    feedRepeatedResults(deps, 'sess-1', 3);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold);
     deps.store.setAlertSink(() => {});
     executeAlertMain(deps, { targetId: 'sess-1', message: 'stuck!' });
     // the loop keeps repeating after the alert, but the cooldown blocks a re-alert
-    feedRepeatedResults(deps, 'sess-1', 3, NOW + 1000);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold, NOW + 1000);
     const second = executeAlertMain(deps, { targetId: 'sess-1', message: 'stuck!' });
     expect(second).toContain('cooldown');
   });
 
   it('re-alerts with the default no-cooldown (0) once the loop repeats after the alert', () => {
     const deps = makeDeps();
-    feedRepeatedResults(deps, 'sess-1', 3);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold);
     deps.store.setAlertSink(() => {});
     executeAlertMain(deps, { targetId: 'sess-1', message: 'stuck!' });
     // counter resets at the alert; fresh repeats after it re-trigger
-    feedRepeatedResults(deps, 'sess-1', 3, NOW + 1000);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold, NOW + 1000);
     const second = executeAlertMain(deps, { targetId: 'sess-1', message: 'stuck!' });
     expect(second).toContain('alert sent to main session');
   });
 
   it('reports a missing sink as an error', () => {
     const deps = makeDeps();
-    feedRepeatedResults(deps, 'sess-1', 3);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold);
     expect(executeAlertMain(deps, { targetId: 'sess-1', message: 'stuck!' })).toContain('no alert sink');
   });
 });
@@ -282,7 +282,7 @@ describe('executeConfig', () => {
 describe('formatAlert', () => {
   it('renders the requirement §8.2 template', () => {
     const deps = makeDeps();
-    feedRepeatedResults(deps, 'sess-1', 3);
+    feedRepeatedResults(deps, 'sess-1', DEFAULT_CONFIG.llmRepeatThreshold);
     const alert = formatAlert(
       'sess-1',
       JSON.parse(executeDetectStuck(deps, { targetId: 'sess-1' })),
@@ -299,7 +299,7 @@ describe('formatAlert', () => {
         'Confidence: medium',
         '',
         'Evidence:',
-        '- llm message repeated 3 times: same LLM output body (hash hash-sam)',
+        `- llm message repeated ${DEFAULT_CONFIG.llmRepeatThreshold} times: same LLM output body (hash hash-sam)`,
         '',
         'Note:',
         'stuck!',

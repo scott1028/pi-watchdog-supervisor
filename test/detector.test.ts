@@ -4,6 +4,7 @@ import { DEFAULT_CONFIG } from '../src/config.ts';
 import type { WatchdogEvent, WatchdogEventType } from '../src/types.ts';
 
 const NOW = 1_000_000_000;
+const REPEAT_CONFIG = { ...DEFAULT_CONFIG, llmRepeatThreshold: 3 };
 
 let seq = 0;
 const ev = (
@@ -33,14 +34,14 @@ const llmRun = (
 
 describe('detectStuck: repeated llm messages', () => {
   it('flags repeated_llm_output for 3x identical normalized output body', () => {
-    const analysis = detectStuck(llmRun('llm_output', 3, 'body-1'), DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(llmRun('llm_output', 3, 'body-1'), REPEAT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(true);
     expect(analysis.confidence).toBe('medium');
     expect(analysis.evidence.map((item) => item.type)).toEqual(['repeated_llm_output']);
   });
 
   it('flags repeated_llm_input for 3x identical input body', () => {
-    const analysis = detectStuck(llmRun('llm_input', 3, 'body-1'), DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(llmRun('llm_input', 3, 'body-1'), REPEAT_CONFIG, NOW);
     expect(analysis.evidence.map((item) => item.type)).toEqual(['repeated_llm_input']);
   });
 
@@ -49,19 +50,19 @@ describe('detectStuck: repeated llm messages', () => {
       ev('llm_input', NOW - 10_000 + i * 2000, 'llm_input', 'in-same'),
       ev('llm_output', NOW - 9000 + i * 2000, 'llm_output', 'out-same'),
     ]);
-    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(events, REPEAT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(true);
     expect(analysis.confidence).toBe('high');
   });
 
   it('does not flag 2x identical body', () => {
-    const analysis = detectStuck(llmRun('llm_output', 2, 'body-1'), DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(llmRun('llm_output', 2, 'body-1'), REPEAT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(false);
     expect(analysis.evidence).toEqual([]);
   });
 
   it('does not flag when bodies differ', () => {
-    const analysis = detectStuck(llmRun('llm_output', 5, (i) => `body-${i}`), DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(llmRun('llm_output', 5, (i) => `body-${i}`), REPEAT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(false);
   });
 
@@ -71,7 +72,7 @@ describe('detectStuck: repeated llm messages', () => {
       ev('llm_output', NOW - 7000, 'llm_output', 'body-other'),
       ev('llm_output', NOW - 6000, 'llm_output', 'body-1'),
     ];
-    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(events, REPEAT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(false);
   });
 
@@ -79,15 +80,15 @@ describe('detectStuck: repeated llm messages', () => {
     const events = llmRun('llm_output', 5, 'body-1');
     // alert happened after the 3rd event → only 2 remain countable
     const sinceAt = events[2].at;
-    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW, sinceAt);
+    const analysis = detectStuck(events, REPEAT_CONFIG, NOW, sinceAt);
     expect(analysis.likelyStuck).toBe(false);
     // three more repeats after the alert → triggers again
     const more = [...events, ...llmRun('llm_output', 1, 'body-1').map((e) => ({ ...e, at: NOW - 1000 }))];
-    expect(detectStuck(more, DEFAULT_CONFIG, NOW, sinceAt).likelyStuck).toBe(true);
+    expect(detectStuck(more, REPEAT_CONFIG, NOW, sinceAt).likelyStuck).toBe(true);
   });
 
   it('counts the full buffer when sinceAt is omitted', () => {
-    const analysis = detectStuck(llmRun('llm_output', 3, 'body-1'), DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(llmRun('llm_output', 3, 'body-1'), REPEAT_CONFIG, NOW);
     expect(analysis.likelyStuck).toBe(true);
   });
 
@@ -97,7 +98,7 @@ describe('detectStuck: repeated llm messages', () => {
       ev('tool_result', NOW - 9500 + i * 2000, 'edit src/a.ts', `tool-${i}`),
       ev('edit', NOW - 9200 + i * 2000, 'edit src/a.ts'),
     ]);
-    const analysis = detectStuck(events, DEFAULT_CONFIG, NOW);
+    const analysis = detectStuck(events, REPEAT_CONFIG, NOW);
     expect(analysis.evidence.map((item) => item.type)).toEqual(['repeated_llm_output']);
   });
 });
@@ -164,9 +165,9 @@ describe('detectStuck: zero thresholds disable rules', () => {
 describe('detectStuck: evidenceKey and empty buffer', () => {
   it('is stable for the same input and differs across evidence sets', () => {
     const repeated = llmRun('llm_output', 3, 'body-1');
-    const first = detectStuck(repeated, DEFAULT_CONFIG, NOW);
-    const second = detectStuck(repeated, DEFAULT_CONFIG, NOW);
-    const other = detectStuck(llmRun('llm_input', 3, 'body-2'), DEFAULT_CONFIG, NOW);
+    const first = detectStuck(repeated, REPEAT_CONFIG, NOW);
+    const second = detectStuck(repeated, REPEAT_CONFIG, NOW);
+    const other = detectStuck(llmRun('llm_input', 3, 'body-2'), REPEAT_CONFIG, NOW);
     expect(first.evidenceKey).toBe(second.evidenceKey);
     expect(first.evidenceKey).not.toBe(other.evidenceKey);
   });
@@ -179,7 +180,7 @@ describe('detectStuck: evidenceKey and empty buffer', () => {
 });
 
 describe('shouldAlert', () => {
-  const stuck = detectStuck(llmRun('llm_output', 3, 'body-1'), DEFAULT_CONFIG, NOW);
+  const stuck = detectStuck(llmRun('llm_output', 3, 'body-1'), REPEAT_CONFIG, NOW);
   const calm = detectStuck([], DEFAULT_CONFIG, NOW);
   const COOLDOWN = 60;
 

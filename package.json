@@ -1,6 +1,6 @@
 {
   "name": "pi-watchdog-supervisor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension: watchdog supervisor for task sub-agents",
   "type": "module",
   "keywords": [

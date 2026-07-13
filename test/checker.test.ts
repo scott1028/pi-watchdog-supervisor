@@ -37,7 +37,7 @@ describe('createStuckChecker', () => {
   it('sends a steer rescue message when stuck is detected', () => {
     const store = getOrCreateStore(50);
     const sent: SentMessage[] = [];
-    feedRepeatedResults(store, 3);
+    feedRepeatedResults(store, DEFAULT_CONFIG.llmRepeatThreshold);
     const check = createStuckChecker(makePi(sent), store, SESSION, DEFAULT_CONFIG);
     check();
     expect(sent).toHaveLength(1);
@@ -48,15 +48,15 @@ describe('createStuckChecker', () => {
   it('resets the counter after an alert: no re-alert until the loop repeats again', () => {
     const store = getOrCreateStore(50);
     const sent: SentMessage[] = [];
-    feedRepeatedResults(store, 3);
+    feedRepeatedResults(store, DEFAULT_CONFIG.llmRepeatThreshold);
     const check = createStuckChecker(makePi(sent), store, SESSION, DEFAULT_CONFIG);
     check();
     expect(sent).toHaveLength(1);
     // no new events: the historical run is excluded by the alert cutoff
     check();
     expect(sent).toHaveLength(1);
-    // the loop keeps going: three fresh repeats re-trigger (no cooldown by default)
-    feedRepeatedResults(store, 3, Date.now() + 1000);
+    // the loop keeps going: fresh repeats re-trigger (no cooldown by default)
+    feedRepeatedResults(store, DEFAULT_CONFIG.llmRepeatThreshold, Date.now() + 1000);
     check();
     expect(sent).toHaveLength(2);
   });
@@ -64,13 +64,13 @@ describe('createStuckChecker', () => {
   it('does not re-trigger within a positive cooldown even when the loop repeats', () => {
     const store = getOrCreateStore(50);
     const sent: SentMessage[] = [];
-    feedRepeatedResults(store, 3);
+    feedRepeatedResults(store, DEFAULT_CONFIG.llmRepeatThreshold);
     const check = createStuckChecker(makePi(sent), store, SESSION, {
       ...DEFAULT_CONFIG,
       cooldownSec: 60,
     });
     check();
-    feedRepeatedResults(store, 3, Date.now() + 1000);
+    feedRepeatedResults(store, DEFAULT_CONFIG.llmRepeatThreshold, Date.now() + 1000);
     check();
     expect(sent).toHaveLength(1);
   });
@@ -78,7 +78,7 @@ describe('createStuckChecker', () => {
   it('respects the pause state', () => {
     const store = getOrCreateStore(50);
     const sent: SentMessage[] = [];
-    feedRepeatedResults(store, 3);
+    feedRepeatedResults(store, DEFAULT_CONFIG.llmRepeatThreshold);
     store.setPaused(true);
     const check = createStuckChecker(makePi(sent), store, SESSION, DEFAULT_CONFIG);
     check();
@@ -96,7 +96,7 @@ describe('createStuckChecker', () => {
   it('does nothing when the watchdog is disabled via config', () => {
     const store = getOrCreateStore(50);
     const sent: SentMessage[] = [];
-    feedRepeatedResults(store, 3);
+    feedRepeatedResults(store, DEFAULT_CONFIG.llmRepeatThreshold);
     const check = createStuckChecker(makePi(sent), store, SESSION, {
       ...DEFAULT_CONFIG,
       enabled: false,
@@ -108,7 +108,7 @@ describe('createStuckChecker', () => {
   it('prefers the runtime rescue message override', () => {
     const store = getOrCreateStore(50);
     const sent: SentMessage[] = [];
-    feedRepeatedResults(store, 3);
+    feedRepeatedResults(store, DEFAULT_CONFIG.llmRepeatThreshold);
     store.setRescueMessage('custom rescue');
     const check = createStuckChecker(makePi(sent), store, SESSION, DEFAULT_CONFIG);
     check();
